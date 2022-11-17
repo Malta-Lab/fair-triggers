@@ -11,6 +11,17 @@ import utils
 from pathlib import Path
 from argparse import ArgumentParser
 
+def get_random_batch(targets):
+    """Select a random batch from a list of batches"""
+    v =torch.randperm(len(targets))[0]
+    return targets[v]
+
+def get_batch_loss(model, targets, trigger_tokens, device):
+    """Get loss based on a random batch"""
+    batch = get_random_batch(targets)
+    loss = get_loss(model, len(batch), trigger_tokens, batch, device)
+    return loss
+
 # returns the wordpiece embedding weight matrix
 def get_embedding_weight(language_model):
     for module in language_model.modules():
@@ -30,12 +41,10 @@ def add_hooks(language_model):
 def get_loss(language_model, batch_size, trigger, target, device='cuda'):
     # context is trigger repeated batch size
     tensor_trigger = torch.tensor(trigger, device=device, dtype=torch.long).unsqueeze(0).repeat(batch_size, 1)
-    #mask_out = -1 * torch.ones_like(tensor_trigger) # we zero out the loss for the trigger tokens
     mask_out = 0 * torch.ones_like(tensor_trigger) # we zero out the loss for the trigger tokens
     lm_input = torch.cat((tensor_trigger, target), dim=1) # we feed the model the trigger + target texts
     mask_and_target = torch.cat((mask_out, target), dim=1) # has -1's + target texts for loss computation
     lm_input[lm_input == -1] = 1   # put random token of 1 at end of context (its masked out)
-    #print('lm_input', lm_input.shape)
     loss = language_model(lm_input, labels=mask_and_target)[0]
     return loss
 
@@ -53,7 +62,6 @@ def make_target_batch(tokenizer, device, target_texts):
     # pad tokens, i.e., append -1 to the end of the non-longest ones
     for indx, encoded_text in enumerate(encoded_texts):
         if len(encoded_text) < max_len:
-            #encoded_texts[indx].extend([-1] * (max_len - len(encoded_text)))
             encoded_texts[indx].extend([0] * (max_len - len(encoded_text)))
 
     # convert to tensors and batch them up
@@ -66,10 +74,8 @@ def make_target_batch(tokenizer, device, target_texts):
             target_tokens_batch = torch.cat((target_tokens, target_tokens_batch), dim=0)
     return target_tokens_batch
 
-def run_model():
-    np.random.seed(0)
-    torch.random.manual_seed(0)
-    torch.cuda.manual_seed(0)
+def run_model(args):
+    utils.set_seeds(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     tokenizer = AutoTokenizer.from_pretrained("gpt2", cache_dir='cache/')
@@ -84,11 +90,12 @@ def run_model():
     # Create a batch of targets you'd like to increase the likelihood of.
     # This can be modified to include whatever topic you want
     # (e.g., sports, technology, hate speech, etc.)
-    # target_texts = utils.read_sentences(Path('./targets/racist.txt'))
-    target_texts = utils.read_sentences(Path('./targets/test.txt'))
+    target_texts = utils.read_sentences(Path(args.ref_file))
 
     # batch and pad the target tokens
     target_tokens = make_target_batch(tokenizer, device, target_texts)
+    # split into batches
+    group_of_target_tokens = torch.split(target_tokens, args.batch_size)
 
     for _ in range(10): # different random restarts of the trigger
         print('Starting new trigger')
@@ -102,7 +109,9 @@ def run_model():
 
         # get initial loss for the trigger
         model.zero_grad()
-        loss = get_loss(model, batch_size, trigger_tokens, target_tokens, device)
+        #loss = get_loss(model, batch_size, trigger_tokens, target_tokens, device)
+        loss = get_batch_loss(model, group_of_target_tokens, trigger_tokens, device)
+
         best_loss = loss
         counter = 0
         end_iter = False
@@ -133,8 +142,9 @@ def run_model():
                     candidate_trigger_tokens[token_to_flip] = cand
 
                     # get loss, update current best if its lower loss
-                    curr_loss = get_loss(model, batch_size, candidate_trigger_tokens,
-                                         target_tokens, device)
+                    #curr_loss = get_loss(model, batch_size, candidate_trigger_tokens,
+                    #                     target_tokens, device)
+                    curr_loss = get_batch_loss(model, group_of_target_tokens, candidate_trigger_tokens, device)
                     if curr_loss < curr_best_loss:
                         curr_best_loss = curr_loss
                         curr_best_trigger_tokens = deepcopy(candidate_trigger_tokens)
@@ -156,7 +166,8 @@ def run_model():
 
                 # reevaluate the best candidate so you can backprop into it at next iteration
                 model.zero_grad()
-                loss = get_loss(model, batch_size, trigger_tokens, target_tokens, device)
+                #loss = get_loss(model, batch_size, trigger_tokens, target_tokens, device)
+                loss = get_batch_loss(model, group_of_target_tokens, trigger_tokens, device)
 
         # Print final trigger and get 10 samples from the model
         print("Loss: " + str(best_loss.data.item()))
@@ -180,10 +191,10 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--model', type=str, default='gpt2')
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--batch_size', type=int, default=32)
-    parser.add_argument('--file', type=str, default='target/racist.txt')
+    parser.add_argument('--batch_size', type=int, default=5)
+    parser.add_argument('-rf','--ref_file', type=str, default='target/racist.txt')
 
     args = parser.parse_args()
 
-    run_model()
+    run_model(args)
 
