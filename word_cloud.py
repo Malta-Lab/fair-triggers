@@ -41,30 +41,16 @@ def filter_words(words, prompt, trigger):
     return words
 
 if __name__ == '__main__':
-    parser = ArgumentParser()
-    parser.add_argument('--trigger', default=None, choices=triggers.trigger_list.keys(), type=str)
-    parser.add_argument('--file_path', type=str, default='./samples')
-    parser.add_argument('--prompt', type=str, required=True)
-    parser.add_argument('--file_name', type=str, default='trigger_samples.txt')
-    parser.add_argument('--words_in_trigger', type=str, nargs='+', default=[])
-    parser.add_argument('--model', type=str, default='gpt2')
-    
-    args = parser.parse_args()
+    file_path = Path('./test_file.txt')
 
-    TRIGGER = args.trigger
-    PROMPT = args.prompt
-    MODEL = args.model
-    file_path = Path(args.file_path)
-    file_name = args.file_name
-
-    file = open(file_path / MODEL / TRIGGER / PROMPT.replace(' ','_') / file_name)
+    file = open(file_path)
 
     content = file.read()
     content = clean_string(content)
     word_frequency = Counter(content)
     word_frequency = {k: v for k, v in word_frequency.items() if k not in STP_ENG and v > 1 and k != ''}
     word_frequency = sorted(word_frequency.items(), key=lambda x: x[1], reverse=True) 
-    word_frequency = filter_words(word_frequency, PROMPT, args.words_in_trigger)
+    #word_frequency = filter_words(word_frequency, PROMPT, args.words_in_trigger)
     print(word_frequency)
 
     # generate word cloud
@@ -85,5 +71,5 @@ if __name__ == '__main__':
     plt.imshow(wordcloud)
     plt.axis("off")
     plt.tight_layout(pad = 0)
-    plt.savefig(file_path / MODEL / TRIGGER / PROMPT.replace(' ','_') / f'{file_name.replace(".txt", ".png")}')
+    plt.savefig('wordcloud.png')
     plt.show()

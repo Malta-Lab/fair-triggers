@@ -2,6 +2,9 @@
 ***
 ## Objective:
 * Use triggers with language modeling and other tasks to reduce bias.
+
+## Datasets:
+* Bias in Bios: https://github.com/microsoft/biosbias
 ***
 ## Related Work:
 * Our work is based on other two papers:
