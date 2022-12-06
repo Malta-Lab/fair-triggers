@@ -8,7 +8,6 @@ from nltk.corpus import stopwords
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud#, STOPWORDS
 
-import triggers
 
 STP_ENG = set(stopwords.words('english'))
 
@@ -31,17 +30,21 @@ def export(data):
 	shuffle(words)
 	return words
 
-def filter_words(words, prompt, trigger):
-    trigger = [w.lower() for w in trigger]
-    print(trigger)
-    prompt = [w.lower() for w in prompt.split(' ')]
-    print(prompt)
-    words = [w for w in words if w[0] not in prompt]
+def filter_words(words, trigger):
+    trigger = [w.lower() for w in trigger.split(' ')]
+    print(len(words))
     words = [w for w in words if w[0] not in trigger]
+    print(len(words))
     return words
 
 if __name__ == '__main__':
-    file_path = Path('./test_file.txt')
+    parser = ArgumentParser()
+    parser.add_argument('--input_file', type=str, default='text_samples.txt')
+    parser.add_argument('--output_file', type=str, default='word_cloud.png')
+    parser.add_argument('--trigger', type=str, default='')
+    args = parser.parse_args()
+    
+    file_path = Path('./samples') / args.input_file 
 
     file = open(file_path)
 
@@ -50,7 +53,8 @@ if __name__ == '__main__':
     word_frequency = Counter(content)
     word_frequency = {k: v for k, v in word_frequency.items() if k not in STP_ENG and v > 1 and k != ''}
     word_frequency = sorted(word_frequency.items(), key=lambda x: x[1], reverse=True) 
-    #word_frequency = filter_words(word_frequency, PROMPT, args.words_in_trigger)
+    # TODO: filtering is not working properly
+    word_frequency = filter_words(word_frequency, args.trigger)
     print(word_frequency)
 
     # generate word cloud
@@ -71,5 +75,5 @@ if __name__ == '__main__':
     plt.imshow(wordcloud)
     plt.axis("off")
     plt.tight_layout(pad = 0)
-    plt.savefig('wordcloud.png')
+    plt.savefig(Path('images') / args.output_file)
     plt.show()
