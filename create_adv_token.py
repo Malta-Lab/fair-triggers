@@ -9,7 +9,7 @@ import attacks
 import utils
 from pathlib import Path
 from argparse import ArgumentParser
-from model import ModelWrapper
+from model import model_wrapper
 
 def get_random_batch(targets):
     """Select a random batch from a list of batches"""
@@ -76,7 +76,7 @@ def make_target_batch(tokenizer, device, target_texts):
 
 def run_model(args):
     utils.set_seeds(args.seed)
-    model,tokenizer,device = ModelWrapper(args.model_name_or_path).get_all()
+    model,tokenizer,device = model_wrapper(args.model_name_or_path).get_all()
     model.eval()
 
     add_hooks(model) # add gradient hooks to embeddings

@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from model import ModelWrapper
+from model import model_wrapper
 from tqdm import tqdm
 from argparse import ArgumentParser
 from pathlib import Path
@@ -71,8 +71,7 @@ def sample_seq_hf(model, tokenizer, length, context=None, temperature=0.7, top_k
 
 
 def main(args):
-    model_wrapper = ModelWrapper('gpt2-medium')
-    model, tokenizer, _ = model_wrapper.get_all()
+    model, tokenizer, _  = model_wrapper('gpt2-medium').get_all()
     model.eval()
     output_path = Path('./samples/')
     output_path.mkdir(exist_ok=True, parents=True)
