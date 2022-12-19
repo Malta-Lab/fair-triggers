@@ -1,3 +1,5 @@
+from argparse import ArgumentParser
+from pathlib import Path
 import os
 
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
@@ -48,7 +50,7 @@ def evaluate(model, dataloader, criterion, device, metrics):
     return total_loss / len(dataloader)
 
 
-def main():
+def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     set_seed(42)
 
@@ -60,7 +62,7 @@ def main():
     val_dataloader = DataLoader(val_dataset, batch_size=512, shuffle=True)
 
     model = AutoModelForSequenceClassification.from_pretrained(
-        "checkpoints/best_model", cache_dir="../cache", num_labels=num_labels
+        f"checkpoints/{args.experiment}/best_model", cache_dir="../cache", num_labels=num_labels
     )
 
     criterion = nn.CrossEntropyLoss()
@@ -98,4 +100,9 @@ def main():
 if __name__ == "__main__":
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-    main()
+
+    parser = ArgumentParser()
+    parser.add_argument("-exp", "--experiment", type=str, default='base')
+    args = parser.parse_args()
+
+    main(args)

@@ -1,3 +1,5 @@
+from argparse import ArgumentParser
+from pathlib import Path
 import os
 
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
@@ -87,7 +89,7 @@ def evaluate(model, dataloader, criterion, device, metrics):
     return total_loss / len(dataloader)
 
 
-def main():
+def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     set_seed(42)
 
@@ -131,7 +133,7 @@ def main():
         # ).to(device),
     }
 
-    for epoch in range(10):
+    for epoch in range(3):
         train_loss = train(
             model, train_dataloader, criterion, optimizer, device, metrics, epoch
         )
@@ -147,10 +149,15 @@ def main():
 
         if metrics["micro_accuracy"] > previous_best_acc:
             previous_best_acc = metrics["micro_accuracy"]
-            model.save_pretrained(f"./checkpoints/best_model")
+            model.save_pretrained(f"./checkpoints/{args.experiment}/best_model")
 
 
 if __name__ == "__main__":
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-    main()
+
+    parser = ArgumentParser()
+    parser.add_argument("-exp", "--experiment", type=str, default='base')
+    args = parser.parse_args()
+
+    main(args)
