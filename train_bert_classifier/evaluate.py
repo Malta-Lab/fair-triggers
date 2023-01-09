@@ -9,18 +9,28 @@ import torch.nn as nn
 import torchmetrics
 import torch
 
-from dataset import BiasInBiosDataset
+from dataset import DatasetWrapper
 from utils import set_seed
 
 
-def reset_metrics(metrics):
-    """Reset metrics"""
-    for metric in metrics.values():
-        metric.reset()
-
-
-def evaluate(model, dataloader, criterion, device, metrics):
+def evaluate(model, dataloader, criterion, device):
     """Calculate eval loss, accuracy and f1 score for the model"""
+    macro_accuracy = torchmetrics.Accuracy(
+        num_classes=33, task="multiclass", average="macro"
+    ).to(device)
+    micro_accuracy = torchmetrics.Accuracy(
+        num_classes=33, task="multiclass", average="micro"
+    ).to(device)
+    macro_f1 = torchmetrics.F1Score(
+        num_classes=33, task="multiclass", average="macro"
+    ).to(device)
+    micro_f1 = torchmetrics.F1Score(
+        num_classes=33, task="multiclass", average="micro"
+    ).to(device)
+    confusion_matrix = torchmetrics.ConfusionMatrix(
+        num_classes=33, task="multiclass"
+    ).to(device)
+
     pbar = tqdm(dataloader, desc=f"Validation")
     model.eval()
     with torch.no_grad():
@@ -38,16 +48,31 @@ def evaluate(model, dataloader, criterion, device, metrics):
 
             total_loss += loss.item()
 
-            metrics["confusion_matrix"](outputs.logits, labels)
-            metrics["macro_accuracy"](outputs.logits, labels)
-            metrics["micro_accuracy"](outputs.logits, labels)
-            metrics["macro_f1"](outputs.logits, labels)
-            metrics["micro_f1"](outputs.logits, labels)
+            confusion_matrix(outputs.logits, labels)
+            macro_accuracy(outputs.logits, labels)
+            micro_accuracy(outputs.logits, labels)
+            macro_f1(outputs.logits, labels)
+            micro_f1(outputs.logits, labels)
 
-            # if idx == 3:
-            #     break
+            if idx != 0:
+                print(torch.argmax(outputs.logits, dim=1), labels)
+                status = {
+                    "loss": f"{round(total_loss / (idx + 1),2)}",
+                    "macro_accuracy": macro_accuracy.compute().item(),
+                    "micro_accuracy": micro_accuracy.compute().item(),
+                    "macro_f1": macro_f1.compute().item(),
+                    "micro_f1": micro_f1.compute().item(),
+                }
+                pbar.set_postfix(status)
 
-    return total_loss / len(dataloader)
+    return (
+        total_loss / len(dataloader),
+        macro_accuracy.compute(),
+        micro_accuracy.compute(),
+        macro_f1.compute(),
+        micro_f1.compute(),
+        confusion_matrix.compute(),
+    )
 
 
 def main(args):
@@ -56,13 +81,13 @@ def main(args):
 
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased", cache_dir="../cache")
 
-    num_labels = 33
-
-    val_dataset = BiasInBiosDataset("../../biosbias", tokenizer, 256, "val")
+    _, val_dataset = DatasetWrapper(
+        "bias-in-bios", "../../biosbias", tokenizer, 256
+    )._get_dataset()
     val_dataloader = DataLoader(val_dataset, batch_size=512, shuffle=True)
 
     model = AutoModelForSequenceClassification.from_pretrained(
-        f"checkpoints/{args.experiment}/best_model", cache_dir="../cache", num_labels=num_labels
+        f"checkpoints/{args.experiment}/best_model", cache_dir="../cache"
     )
 
     criterion = nn.CrossEntropyLoss()
@@ -70,39 +95,26 @@ def main(args):
     model.to(device)
     criterion.to(device)
 
-    metrics = {
-        "macro_accuracy": torchmetrics.Accuracy(
-            num_classes=num_labels, task="multiclass", average="macro"
-        ).to(device),
-        "micro_accuracy": torchmetrics.Accuracy(
-            num_classes=num_labels, task="multiclass", average="micro"
-        ).to(device),
-        "macro_f1": torchmetrics.F1Score(
-            num_classes=num_labels, task="multiclass", average="macro"
-        ).to(device),
-        "micro_f1": torchmetrics.F1Score(
-            num_classes=num_labels, task="multiclass", average="micro"
-        ).to(device),
-        "confusion_matrix": torchmetrics.ConfusionMatrix(
-            num_classes=num_labels, task="multiclass"
-        ).to(device),
-    }
+    results = evaluate(model, val_dataloader, criterion, device)
 
-    eval_loss = evaluate(model, val_dataloader, criterion, device, metrics)
+    save_path = Path(f"checkpoints/{args.experiment}/best_model")
 
-    print(f"Eval loss: {eval_loss}")
-    with open("results.txt", "w") as f:
+    with open(save_path / "torchmetrics.txt", "w") as f:
         torch.set_printoptions(profile="full")
-        for metric_name, metric in metrics.items():
-            print(f"{metric_name}: {metric.compute()}")
-            f.write(f"{metric_name}: {metric.compute()}\n")
+        f.write(f"Eval loss: {results[0]}")
+        f.write(f"Macro accuracy: {results[1]}")
+        f.write(f"Micro accuracy: {results[2]}")
+        f.write(f"Macro f1: {results[3]}")
+        f.write(f"Micro f1: {results[4]}")
+        f.write(f"Confusion matrix: {results[5]}")
+
 
 if __name__ == "__main__":
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     parser = ArgumentParser()
-    parser.add_argument("-exp", "--experiment", type=str, default='base')
+    parser.add_argument("-exp", "--experiment", type=str, default="base")
     args = parser.parse_args()
 
     main(args)

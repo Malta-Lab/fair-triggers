@@ -9,7 +9,7 @@ import torch.nn as nn
 import torchmetrics
 import torch
 
-from dataset import BiasInBiosDataset
+from dataset import DatasetWrapper
 from utils import set_seed
 
 
@@ -95,11 +95,9 @@ def main(args):
 
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased", cache_dir="../cache")
 
-    train_dataset = BiasInBiosDataset("../../biosbias", tokenizer, 256, "train")
+    train_dataset, valid_dataset = DatasetWrapper('bias-in-bios',"../../biosbias", tokenizer, 256)._get_dataset()
     train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-
-    val_dataset = BiasInBiosDataset("../../biosbias", tokenizer, 256, "val")
-    val_dataloader = DataLoader(val_dataset, batch_size=32, shuffle=True)
+    val_dataloader = DataLoader(valid_dataset, batch_size=32, shuffle=False)
 
     num_labels = len(train_dataset.labels)
 
@@ -133,7 +131,7 @@ def main(args):
         # ).to(device),
     }
 
-    for epoch in range(3):
+    for epoch in range(1):
         train_loss = train(
             model, train_dataloader, criterion, optimizer, device, metrics, epoch
         )
