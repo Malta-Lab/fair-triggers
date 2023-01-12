@@ -148,6 +148,7 @@ def main(args):
         if metrics["micro_accuracy"] > previous_best_acc:
             previous_best_acc = metrics["micro_accuracy"]
             model.save_pretrained(f"./checkpoints/{args.experiment}/best_model")
+            tokenizer.save_pretrained(f"./checkpoints/{args.experiment}/best_model")
 
 
 if __name__ == "__main__":
