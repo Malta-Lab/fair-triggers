@@ -2,18 +2,15 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, AutoModelForSequen
 from torch import device
 from torch.cuda import is_available
 
-def model_wrapper(model_name):
-    AVAILABLE_LM_MODELS = ['gpt2', 'gpt2-medium']
-    AVAILABLE_SC_MODELS = ['bert-base-uncased', 'bert-large-uncased']
-
-    if model_name in AVAILABLE_LM_MODELS:
+def model_wrapper(model_name, task):
+    if task  == 'lm':
         return LanguageModelWrapper(model_name)
-    elif model_name in AVAILABLE_SC_MODELS:
+    elif task == 'classification':
         return SequenceClassificationModelWrapper(model_name)
     else:
         Exception('Model not available')
 
-class ModelWrapper():
+class BaseModel():
 
     def __load_tokenizer(self, model_name):
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir='cache')
@@ -35,37 +32,30 @@ class ModelWrapper():
         return self.AVAILABLE_MODELS
 
 
-class LanguageModelWrapper(ModelWrapper):
+class LanguageModelWrapper(BaseModel):
     def __init__(self, model_name:str):
-        self.AVAILABLE_MODELS = ['gpt2', 'gpt2-medium']
+        self.device = device('cuda' if is_available() else 'cpu')
+        self.model = self.__load_model(model_name)
+        self.tokenizer = self._BaseModel__load_tokenizer(model_name)
 
-        if model_name in self.AVAILABLE_MODELS:
-            self.device = device('cuda' if is_available() else 'cpu')
-            self.model = self.__load_model(model_name)
-            self.tokenizer = self._ModelWrapper__load_tokenizer(model_name)
+        self.model.to(self.device)
 
-            self.model.to(self.device)
-            
-        else:
-            Exception('Model not available')
 
     def __load_model(self, model_name):
         self.model = AutoModelForCausalLM.from_pretrained(model_name, cache_dir='cache')
         return self.model
 
-class SequenceClassificationModelWrapper(ModelWrapper):
+class SequenceClassificationModelWrapper(BaseModel):
     def __init__(self, model_name:str):
-        self.AVAILABLE_MODELS = ['bert-base-uncased', 'bert-large-uncased']
+        self.device = device('cuda' if is_available() else 'cpu')
+        self.model = self.__load_model(model_name)
+        try:
+            self.tokenizer = self._BaseModel__load_tokenizer(model_name)
+        except:
+            self.tokenizer = self._BaseModel__load_tokenizer('bert-base-uncased')
 
-        if model_name in self.AVAILABLE_MODELS:
-            self.device = device('cuda' if is_available() else 'cpu')
-            self.model = self.__load_model(model_name)
-            self.tokenizer = self._ModelWrapper__load_tokenizer(model_name)
+        self.model.to(self.device)
 
-            self.model.to(self.device)
-            
-        else:
-            Exception('Model not available')
 
     def __load_model(self, model_name):
         self.model = AutoModelForSequenceClassification.from_pretrained(model_name, cache_dir='cache')

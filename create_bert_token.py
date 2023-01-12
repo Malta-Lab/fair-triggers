@@ -2,12 +2,19 @@ from copy import deepcopy
 import sys
 import torch
 import numpy as np
-from transformers import AutoModelForCausalLM, AutoTokenizer
 sys.path.append('..')
 import attacks
+import os
 import utils
 from pathlib import Path
+from tqdm import tqdm
 from argparse import ArgumentParser
+from model import model_wrapper
+from train_bert_classifier.dataset import DatasetWrapper
+from torch.utils.data import DataLoader
+import torch.nn.functional as F
+
+#TODO: objetivo eh aumentar a acuracia para alguma classe especifica
 
 def get_random_batch(targets):
     """Select a random batch from a list of batches"""
@@ -21,83 +28,84 @@ def get_batch_loss(model, targets, trigger_tokens, device):
     return loss
 
 # returns the wordpiece embedding weight matrix
-def get_embedding_weight(language_model):
+def get_embedding_weight(language_model, vocab_size):
     for module in language_model.modules():
         if isinstance(module, torch.nn.Embedding):
-            if module.weight.shape[0] == 50257: # only add a hook to wordpiece embeddings, not position embeddings
+            if module.weight.shape[0] == vocab_size: # only add a hook to wordpiece embeddings, not position embeddings
                 return module.weight.detach()
 
 # add hooks for embeddings
-def add_hooks(language_model):
-    for module in language_model.modules():
+def add_hooks(model, vocab_size):
+    for module in model.modules():
         if isinstance(module, torch.nn.Embedding):
-            if module.weight.shape[0] == 50257: # only add a hook to wordpiece embeddings, not position
+            if module.weight.shape[0] == vocab_size: # only add a hook to wordpiece embeddings, not position
                 module.weight.requires_grad = True
                 module.register_backward_hook(utils.extract_grad_hook)
 
-# Gets the loss of the target_tokens using the triggers as the context
-def get_loss(language_model, batch_size, trigger, target, device='cuda'):
-    # context is trigger repeated batch size
-    tensor_trigger = torch.tensor(trigger, device=device, dtype=torch.long).unsqueeze(0).repeat(batch_size, 1)
+def get_loss(classifier, iterator, trigger, device='cuda'):
+    batch = next(iterator)
+    
+    # build tensor for trigger
+    tensor_trigger = torch.tensor(trigger, dtype=torch.long).unsqueeze(0).repeat(batch['bio']['input_ids'].shape[0],1)
+    tensor_trigger = tensor_trigger[:,None,:]
     mask_out = 0 * torch.ones_like(tensor_trigger) # we zero out the loss for the trigger tokens
-    lm_input = torch.cat((tensor_trigger, target), dim=1) # we feed the model the trigger + target texts
-    mask_and_target = torch.cat((mask_out, target), dim=1) # has -1's + target texts for loss computation
-    lm_input[lm_input == -1] = 1   # put random token of 1 at end of context (its masked out)
-    loss = language_model(lm_input, labels=mask_and_target)[0]
+
+    batch['bio']['input_ids'] = torch.cat((tensor_trigger, batch['bio']['input_ids']), dim=2)
+    batch['bio']['attention_mask'] = torch.cat((mask_out, batch['bio']['attention_mask']), dim=2)
+
+    # process with model
+    input_ids = batch["bio"]["input_ids"].to(device)
+    attention_mask = batch["bio"]["attention_mask"].to(device)
+    title = batch['title'].to(device)
+    outputs = classifier(input_ids=input_ids[:, 0, :], attention_mask=attention_mask[:, 0, :])
+
+    # obtain loss
+    loss = F.cross_entropy(outputs.logits, title)
     return loss
 
-# creates the batch of target texts with -1 placed at the end of the sequences for padding (for masking out the loss).
-def make_target_batch(tokenizer, device, target_texts):
-    # encode items and get the max length
-    encoded_texts = []
-    max_len = 0
-    for target_text in target_texts:
-        encoded_target_text = tokenizer.encode(target_text)
-        encoded_texts.append(encoded_target_text)
-        if len(encoded_target_text) > max_len:
-            max_len = len(encoded_target_text)
+def get_model_vocab_size(model):
+    for module in model.modules():
+        if isinstance(module, torch.nn.Embedding):
+            return module.weight.shape[0]
+    return Exception('No embedding layer found')
 
-    # pad tokens, i.e., append -1 to the end of the non-longest ones
-    for indx, encoded_text in enumerate(encoded_texts):
-        if len(encoded_text) < max_len:
-            encoded_texts[indx].extend([0] * (max_len - len(encoded_text)))
 
-    # convert to tensors and batch them up
-    target_tokens_batch = None
-    for encoded_text in encoded_texts:
-        target_tokens = torch.tensor(encoded_text, device=device, dtype=torch.long).unsqueeze(0)
-        if target_tokens_batch is None:
-            target_tokens_batch = target_tokens
-        else:
-            target_tokens_batch = torch.cat((target_tokens, target_tokens_batch), dim=0)
-    return target_tokens_batch
+def filter_data_by_label(data, labels):
+    filtered_data = []
+    for item in data:
+        # here is title because in the original bias in bios the label is the title
+        if item['title'] in labels:
+            filtered_data.append(item)
+    return filtered_data
+
+def cycle(iterable):
+    while True:
+        for x in iterable:
+            yield x
 
 def run_model(args):
     utils.set_seeds(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    tokenizer = AutoTokenizer.from_pretrained("gpt2", cache_dir='cache/')
-    model = AutoModelForCausalLM.from_pretrained('gpt2', cache_dir='cache/')
+    model, tokenizer, device = model_wrapper(args.model, args.task).get_all()
     model.eval()
     model.to(device)
 
-    add_hooks(model) # add gradient hooks to embeddings
-    embedding_weight = get_embedding_weight(model) # save the word embedding matrix
+    add_hooks(model, len(tokenizer.vocab)) # add gradient hooks to embeddings
+    embedding_weight = get_embedding_weight(model, len(tokenizer.vocab)) # save the word embedding matrix
 
-    # Warning. the below contains extremely offensive content.
-    # Create a batch of targets you'd like to increase the likelihood of.
-    # This can be modified to include whatever topic you want
-    # (e.g., sports, technology, hate speech, etc.)
-    target_texts = utils.read_sentences(Path(args.ref_file))
+    # Depois de fazer o load, selecionar samples gerais e obter a loss com base na classe que eu vou querer ampliar o resultado.
+    train_dataset, _ = DatasetWrapper('bias-in-bios',"../biosbias", tokenizer, 256)._get_dataset()
+    labels = train_dataset.labels
 
-    # batch and pad the target tokens
-    target_tokens = make_target_batch(tokenizer, device, target_texts)
-    # split into batches
-    group_of_target_tokens = torch.split(target_tokens, args.batch_size)
+    train_dataset.data = filter_data_by_label(train_dataset.data, ['rapper'])#['photographer'])
+
+    dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    group_of_targets = iter(cycle(dataloader))
 
     for _ in range(10): # different random restarts of the trigger
         print('Starting new trigger')
-        total_vocab_size = 50257  # total number of subword pieces in the GPT-2 model
+        total_vocab_size = len(tokenizer.vocab)
         trigger_token_length = 6  # how many subword pieces in the trigger
 
         # sample random initial trigger
@@ -106,7 +114,7 @@ def run_model(args):
 
         # get initial loss for the trigger
         model.zero_grad()
-        loss = get_batch_loss(model, group_of_target_tokens, trigger_tokens, device)
+        loss = get_loss(model, group_of_targets, trigger_tokens, device)
 
         best_loss = loss
         counter = 0
@@ -138,7 +146,7 @@ def run_model(args):
                     candidate_trigger_tokens[token_to_flip] = cand
 
                     # get loss, update current best if its lower loss
-                    curr_loss = get_batch_loss(model, group_of_target_tokens, candidate_trigger_tokens, device)
+                    curr_loss = get_loss(model, group_of_targets, candidate_trigger_tokens, device)
                     if curr_loss < curr_best_loss:
                         curr_best_loss = curr_loss
                         curr_best_trigger_tokens = deepcopy(candidate_trigger_tokens)
@@ -160,7 +168,7 @@ def run_model(args):
 
                 # reevaluate the best candidate so you can backprop into it at next iteration
                 model.zero_grad()
-                loss = get_batch_loss(model, group_of_target_tokens, trigger_tokens, device)
+                loss = get_loss(model, group_of_targets, candidate_trigger_tokens, device)
 
         # Print final trigger and get 10 samples from the model
         print("Loss: " + str(best_loss.data.item()))
@@ -169,12 +177,15 @@ def run_model(args):
 
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument('--model', type=str, default='gpt2')
+    parser.add_argument('--model', type=str, default='bert-base-uncased')
+    parser.add_argument('--task', type=str, default='classification')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--batch_size', type=int, default=5)
-    parser.add_argument('-rf','--ref_file', type=str, default='target/racist.txt')
 
     args = parser.parse_args()
+
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     run_model(args)
 

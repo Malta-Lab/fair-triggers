@@ -76,7 +76,7 @@ def make_target_batch(tokenizer, device, target_texts):
 
 def run_model(args):
     utils.set_seeds(args.seed)
-    model,tokenizer,device = model_wrapper(args.model_name_or_path).get_all()
+    model,tokenizer,device = model_wrapper(args.model_name_or_path, args.task).get_all()
     model.eval()
 
     add_hooks(model) # add gradient hooks to embeddings
@@ -186,6 +186,7 @@ def run_model(args):
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--model_name_or_path', type=str, default='gpt2')
+    parser.add_argument('--task', type=str, default='lm')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--batch_size', type=int, default=5)
     parser.add_argument('-rf','--ref_file', type=str, default='target/racist.txt')
