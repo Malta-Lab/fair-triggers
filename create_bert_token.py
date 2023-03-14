@@ -14,7 +14,10 @@ from train_bert_classifier.dataset import DatasetWrapper
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
-#TODO: objetivo eh aumentar a acuracia para alguma classe especifica
+# TODO: objetivo eh aumentar a acuracia para alguma classe especifica
+# TODO: Avaliar se o problema de n ter aumentado a acuracia eh por conta da selecao de batch
+# TODO: Avaliar se o problema n eh oriundo de algum erro na implementacao da loss
+# TODO: Conferir o processo como um todo
 
 def get_random_batch(targets):
     """Select a random batch from a list of batches"""
@@ -44,22 +47,23 @@ def add_hooks(model, vocab_size):
 
 def get_loss(classifier, iterator, trigger, device='cuda'):
     batch = next(iterator)
-    
-    # build tensor for trigger
-    tensor_trigger = torch.tensor(trigger, dtype=torch.long).unsqueeze(0).repeat(batch['bio']['input_ids'].shape[0],1)
-    tensor_trigger = tensor_trigger[:,None,:]
-    mask_out = 0 * torch.ones_like(tensor_trigger) # we zero out the loss for the trigger tokens
-
-    batch['bio']['input_ids'] = torch.cat((tensor_trigger, batch['bio']['input_ids']), dim=2)
-    batch['bio']['attention_mask'] = torch.cat((mask_out, batch['bio']['attention_mask']), dim=2)
-
-    # process with model
-    input_ids = batch["bio"]["input_ids"].to(device)
-    attention_mask = batch["bio"]["attention_mask"].to(device)
+    input_ids = batch['bio']['input_ids']
+    input_ids = input_ids.to(device)
+    attention_mask = batch['bio']['attention_mask']
+    attention_mask = attention_mask.to(device)
     title = batch['title'].to(device)
-    outputs = classifier(input_ids=input_ids[:, 0, :], attention_mask=attention_mask[:, 0, :])
 
-    # obtain loss
+    
+    tensor_trigger = torch.tensor(trigger, device=device, dtype=torch.long).unsqueeze(0).repeat(input_ids.shape[0],1)
+    tensor_trigger = tensor_trigger[:,None,:]
+    #mask_out = 0 * torch.ones_like(tensor_trigger) # we zero out the loss for the trigger tokens
+    mask_out = torch.ones_like(tensor_trigger)
+
+    input_ids = torch.cat((tensor_trigger, input_ids), dim=2)
+    #attention_mask = torch.cat((mask_out, attention_mask), dim=2)
+    attention_mask = torch.cat((mask_out, attention_mask), dim=2)
+
+    outputs = classifier(input_ids=input_ids[:, 0, :], attention_mask=attention_mask[:, 0, :])
     loss = F.cross_entropy(outputs.logits, title)
     return loss
 
@@ -96,9 +100,9 @@ def run_model(args):
 
     # Depois de fazer o load, selecionar samples gerais e obter a loss com base na classe que eu vou querer ampliar o resultado.
     train_dataset, _ = DatasetWrapper('bias-in-bios',"../biosbias", tokenizer, 256)._get_dataset()
-    labels = train_dataset.labels
 
-    train_dataset.data = filter_data_by_label(train_dataset.data, ['rapper'])#['photographer'])
+    #train_dataset.data = filter_data_by_label(train_dataset.data, ['teacher'])
+    train_dataset.data = filter_data_by_label(train_dataset.data, args.labels)
 
     dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     group_of_targets = iter(cycle(dataloader))
@@ -179,6 +183,7 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--model', type=str, default='bert-base-uncased')
     parser.add_argument('--task', type=str, default='classification')
+    parser.add_argument('--labels', type=str, default=None, nargs='+')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--batch_size', type=int, default=5)
 
