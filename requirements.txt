@@ -1,0 +1,11 @@
+matplotlib==3.5.3
+nltk==3.7
+numpy==1.22.3
+pandas==2.0.0
+pandas_stubs==1.2.0.53
+scikit_learn==1.2.2
+torch==1.13.0
+torchmetrics==0.11.0
+tqdm==4.63.0
+transformers==4.25.1
+wordcloud==1.8.2.2

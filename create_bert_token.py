@@ -6,18 +6,11 @@ sys.path.append('..')
 import attacks
 import os
 import utils
-from pathlib import Path
-from tqdm import tqdm
 from argparse import ArgumentParser
 from model import model_wrapper
 from train_bert_classifier.dataset import DatasetWrapper
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
-
-# TODO: objetivo eh aumentar a acuracia para alguma classe especifica
-# TODO: Avaliar se o problema de n ter aumentado a acuracia eh por conta da selecao de batch
-# TODO: Avaliar se o problema n eh oriundo de algum erro na implementacao da loss
-# TODO: Conferir o processo como um todo
 
 def get_random_batch(targets):
     """Select a random batch from a list of batches"""
@@ -82,6 +75,32 @@ def filter_data_by_label(data, labels):
             filtered_data.append(item)
     return filtered_data
 
+def filter_data_by_gender(data, labels):
+    filtered_data = []
+    for item in data:
+        if item['gender'] in labels:
+            filtered_data.append(item)
+    return filtered_data
+
+def resample_data_with_constraints(data, focus_label, all_labels, percent=.1):
+    # pegar mais dados da label específica, mas selecionar algumas das demais
+    filtered_data = []
+    focus_label = focus_label[0]
+    label_divided_data = {label: [] for label in all_labels} 
+
+    for item in data:
+        if item['title'] in all_labels:
+            label_divided_data[item['title']].append(item)
+    
+    # concat filtered data with focus label
+    filtered_data.extend(label_divided_data[focus_label])
+    
+    # concat filtered data with .1 percent of the size of the focus label
+    for label in all_labels:
+        filtered_data.extend(label_divided_data[label][:int(len(label_divided_data[label]) * percent)])
+        
+    return filtered_data
+
 def cycle(iterable):
     while True:
         for x in iterable:
@@ -101,8 +120,13 @@ def run_model(args):
     # Depois de fazer o load, selecionar samples gerais e obter a loss com base na classe que eu vou querer ampliar o resultado.
     train_dataset, _ = DatasetWrapper('bias-in-bios',"../biosbias", tokenizer, 256)._get_dataset()
 
-    #train_dataset.data = filter_data_by_label(train_dataset.data, ['teacher'])
-    train_dataset.data = filter_data_by_label(train_dataset.data, args.labels)
+    #train_dataset.data = filter_data_by_label(train_dataset.data, ['rapper'])
+    if args.all_labels:
+        train_dataset.data = resample_data_with_constraints(train_dataset.data, args.label, args.all_labels, percent=.1)
+    else:
+        train_dataset.data = filter_data_by_label(train_dataset.data, args.label)
+
+    #train_dataset.data = filter_data_by_gender(train_dataset.data, ['M'])
 
     dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     group_of_targets = iter(cycle(dataloader))
@@ -183,7 +207,8 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--model', type=str, default='bert-base-uncased')
     parser.add_argument('--task', type=str, default='classification')
-    parser.add_argument('--labels', type=str, default=None, nargs='+')
+    parser.add_argument('--label', type=str, default=None, nargs='+')
+    parser.add_argument('--all_labels', type=str, default=None, nargs='+')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--batch_size', type=int, default=5)
 
