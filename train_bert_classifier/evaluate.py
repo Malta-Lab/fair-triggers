@@ -11,24 +11,25 @@ import torch
 
 from dataset import DatasetWrapper
 from utils import set_seed
+from bert_training import restrict_labels
 
 
-def evaluate(model, dataloader, criterion, device):
+def evaluate(model, dataloader, criterion, labels, device):
     """Calculate eval loss, accuracy and f1 score for the model"""
     macro_accuracy = torchmetrics.Accuracy(
-        num_classes=33, task="multiclass", average="macro"
+        num_classes=len(labels), task="multiclass", average="macro"
     ).to(device)
     micro_accuracy = torchmetrics.Accuracy(
-        num_classes=33, task="multiclass", average="micro"
+        num_classes=len(labels), task="multiclass", average="micro"
     ).to(device)
     macro_f1 = torchmetrics.F1Score(
-        num_classes=33, task="multiclass", average="macro"
+        num_classes=len(labels), task="multiclass", average="macro"
     ).to(device)
     micro_f1 = torchmetrics.F1Score(
-        num_classes=33, task="multiclass", average="micro"
+        num_classes=len(labels), task="multiclass", average="micro"
     ).to(device)
     confusion_matrix = torchmetrics.ConfusionMatrix(
-        num_classes=33, task="multiclass"
+        num_classes=len(labels), task="multiclass"
     ).to(device)
 
     pbar = tqdm(dataloader, desc=f"Validation")
@@ -55,7 +56,6 @@ def evaluate(model, dataloader, criterion, device):
             micro_f1(outputs.logits, labels)
 
             if idx != 0:
-                print(torch.argmax(outputs.logits, dim=1), labels)
                 status = {
                     "loss": f"{round(total_loss / (idx + 1),2)}",
                     "macro_accuracy": macro_accuracy.compute().item(),
@@ -81,13 +81,17 @@ def main(args):
 
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased", cache_dir="../cache")
 
-    _, val_dataset = DatasetWrapper(
+    t, val_dataset = DatasetWrapper(
         "bias-in-bios", "../../biosbias", tokenizer, 256
     )._get_dataset()
+
+    if args.labels:
+        _, val_dataset = restrict_labels(t, val_dataset, args.labels)
+
     val_dataloader = DataLoader(val_dataset, batch_size=512, shuffle=True)
 
     model = AutoModelForSequenceClassification.from_pretrained(
-        f"checkpoints/{args.experiment}/best_model", cache_dir="../cache"
+        f"./../checkpoints/{args.experiment}/best_model", cache_dir="../cache"
     )
 
     criterion = nn.CrossEntropyLoss()
@@ -95,9 +99,9 @@ def main(args):
     model.to(device)
     criterion.to(device)
 
-    results = evaluate(model, val_dataloader, criterion, device)
+    results = evaluate(model, val_dataloader, criterion, args.labels ,device)
 
-    save_path = Path(f"checkpoints/{args.experiment}/best_model")
+    save_path = Path(f"./../checkpoints/{args.experiment}/best_model")
 
     with open(save_path / "torchmetrics.txt", "w") as f:
         torch.set_printoptions(profile="full")
@@ -115,6 +119,7 @@ if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument("-exp", "--experiment", type=str, default="base")
+    parser.add_argument("--labels", type=str, default=None, nargs="+")
     args = parser.parse_args()
 
     main(args)

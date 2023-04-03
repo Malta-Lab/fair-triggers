@@ -12,6 +12,22 @@ import torch
 from dataset import DatasetWrapper
 from utils import set_seed
 
+def filter_data_by_label(data, labels):
+    filtered_data = []
+    for item in data:
+        # here is title because in the original bias in bios the label is the title
+        if item['title'] in labels:
+            filtered_data.append(item)
+    return filtered_data
+
+def restrict_labels(train_dataset, valid_dataset, labels):
+    train_dataset.data = filter_data_by_label(train_dataset.data, labels)
+    train_dataset.labels = train_dataset.count_labels()
+
+    valid_dataset.data = filter_data_by_label(valid_dataset.data, labels)
+    valid_dataset.labels = valid_dataset.count_labels()
+
+    return train_dataset, valid_dataset
 
 def reset_metrics(metrics):
     """Reset metrics"""
@@ -96,10 +112,14 @@ def main(args):
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased", cache_dir="../cache")
 
     train_dataset, valid_dataset = DatasetWrapper('bias-in-bios',"../../biosbias", tokenizer, 256)._get_dataset()
+
+    if args.labels:
+        train_dataset, valid_dataset = restrict_labels(train_dataset, valid_dataset, args.labels)
+
     train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True)
     val_dataloader = DataLoader(valid_dataset, batch_size=32, shuffle=False)
 
-    num_labels = len(train_dataset.labels)
+    num_labels = len(train_dataset.labels) if not args.labels else len(args.labels)
 
     model = AutoModelForSequenceClassification.from_pretrained(
         "bert-base-uncased", cache_dir="../cache", num_labels=num_labels
@@ -126,9 +146,6 @@ def main(args):
         "micro_f1": torchmetrics.F1Score(
             num_classes=num_labels, task="multiclass", average="micro"
         ).to(device),
-        # "confusion_matrix": torchmetrics.ConfusionMatrix(
-        #     num_classes=num_labels, normalize="true", task="multiclass"
-        # ).to(device),
     }
 
     for epoch in range(1):
@@ -147,8 +164,8 @@ def main(args):
 
         if metrics["micro_accuracy"] > previous_best_acc:
             previous_best_acc = metrics["micro_accuracy"]
-            model.save_pretrained(f"./checkpoints/{args.experiment}/best_model")
-            tokenizer.save_pretrained(f"./checkpoints/{args.experiment}/best_model")
+            model.save_pretrained(f"../checkpoints/{args.experiment}/best_model")
+            tokenizer.save_pretrained(f"../checkpoints/{args.experiment}/best_model")
 
 
 if __name__ == "__main__":
@@ -157,6 +174,7 @@ if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument("-exp", "--experiment", type=str, default='base')
+    parser.add_argument("--labels", type=str, default=None, nargs="+")
     args = parser.parse_args()
 
     main(args)
